@@ -10,8 +10,19 @@ from apify_client import ApifyClient
 import google.generativeai as genai
 
 # 1. Initialize APIs
-apify = ApifyClient(os.getenv("APIFY_TOKEN"))
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+def _env(name, default=None, required=False):
+    v = os.getenv(name, default)
+    if isinstance(v, str):
+        # strip common invisible/non-breaking spaces and whitespace
+        v = v.replace('\u00A0', ' ').strip()
+    if required and not v:
+        raise ValueError(f"Missing required environment variable: {name}")
+    return v
+
+APIFY_TOKEN = _env("APIFY_TOKEN")
+GEMINI_API_KEY = _env("GEMINI_API_KEY")
+apify = ApifyClient(APIFY_TOKEN) if APIFY_TOKEN else ApifyClient()
+genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-1.5-flash")
 
 parser = argparse.ArgumentParser()
@@ -229,13 +240,15 @@ html_content = f"""
 """
 
 # 7. Dispatch Email
-sender = os.getenv("SENDER_EMAIL")
-receivers_env = os.getenv("RECEIVER_EMAIL", "")
+sender = _env("SENDER_EMAIL")
+receivers_env = _env("RECEIVER_EMAIL", "") or ""
 receivers = [e.strip() for e in receivers_env.split(",") if e.strip()]
 if sender and sender not in receivers:
     receivers.insert(0, sender)
 if not receivers:
-    raise ValueError("No recipient configured: set RECEIVER_EMAIL or SENDER_EMAIL environment variables")
+    # allow dry-run/test runs without recipients; only require recipients for real send
+    if not args.dry_run:
+        raise ValueError("No recipient configured: set RECEIVER_EMAIL or SENDER_EMAIL environment variables")
 
 msg = MIMEMultipart("alternative")
 msg["From"] = f"Job Matcher Bot <{sender}>"
@@ -243,7 +256,7 @@ msg["To"] = ", ".join(receivers)
 msg["Subject"] = f"🎯 Daily Job Digest: Top Roles for Today"
 msg.attach(MIMEText(html_content, "html"))
 
-if os.path.exists("Top_Matched_Jobs.xlsx"):
+if os.path.exists("Top_Matched_Jobs.xlsx") and not df.empty:
     with open("Top_Matched_Jobs.xlsx", "rb") as f:
         part = MIMEBase("application", "octet-stream")
         part.set_payload(f.read())
@@ -254,12 +267,27 @@ if os.path.exists("Top_Matched_Jobs.xlsx"):
 if args.dry_run:
     print("--- DRY RUN OUTPUT ---")
     print("Top 5 matches (printed):")
-    print(df.head(5).to_string(index=False))
+    try:
+        print(df.head(5).to_string(index=False))
+    except Exception:
+        print(df.head(5))
     print("\nHTML preview:\n")
     print(html_content)
-    print("Excel saved as Top_Matched_Jobs.xlsx")
+    if os.path.exists("Top_Matched_Jobs.xlsx"):
+        print("Excel saved as Top_Matched_Jobs.xlsx")
 else:
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(sender, os.getenv("EMAIL_APP_PASSWORD"))
-        server.send_message(msg, from_addr=sender, to_addrs=receivers)
-    print("Daily digest sent successfully!")
+    # ensure password is sanitized
+    email_pw = _env("EMAIL_APP_PASSWORD")
+    if not email_pw:
+        raise ValueError("EMAIL_APP_PASSWORD is not set. Set an app password for the sender Gmail account.")
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            try:
+                server.login(sender, email_pw)
+            except UnicodeEncodeError:
+                raise ValueError("EMAIL_APP_PASSWORD contains non-ASCII characters — ensure you use the 16-character Gmail App Password (ASCII only)")
+            server.send_message(msg, from_addr=sender, to_addrs=receivers)
+        print("Daily digest sent successfully!")
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+        raise
