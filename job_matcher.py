@@ -40,7 +40,7 @@ rows_per_search = 20
 # Collect jobs across title/location combinations, include remote searches, and deduplicate by URL
 raw_jobs = []
 seen_urls = set()
-actor_id = "curious_coder/linkedin-post-search-scraper"
+actor_id = "curious_coder/linkedin-jobs-scraper"
 
 def fetch_and_accumulate(run_input, searched_title="", searched_location=""):
     try:
