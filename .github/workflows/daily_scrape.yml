@@ -2,8 +2,10 @@ name: Daily 7 AM Job Matcher
 
 on:
   schedule:
-    # 01:30 UTC corresponds to 07:00 AM IST
-    - cron: '30 1 * * *'
+    # Disabled daily schedule to avoid unintended billing.
+    # Set to a non-existent date (Feb 31) so it will never run until intentionally changed.
+    # If you want to re-enable daily runs, change back to: '30 1 * * *' (01:30 UTC -> 07:00 IST)
+    - cron: '0 0 31 2 *'
   workflow_dispatch: # Allows testing manually from the GitHub UI
 
 jobs:
