@@ -37,6 +37,12 @@ titles = ["Data Engineer", "Java Spring Boot Backend", "Full Stack", ""]
 locations = ["Hyderabad", "Banglore", "Pune"]
 rows_per_search = 20
 
+# Cap jobs per location to avoid long/expensive actor runs
+MAX_PER_LOCATION = 300
+
+# Track how many jobs we've collected per searched location
+counts_by_location = {}
+
 # Collect jobs across title/location combinations, include remote searches, and deduplicate by URL
 raw_jobs = []
 seen_urls = set()
@@ -54,38 +60,60 @@ def fetch_and_accumulate(run_input, searched_title="", searched_location=""):
             if not url:
                 # fallback: create a pseudo-unique key from title/company
                 url = f"{it.get('title','')}-{it.get('companyName','')}-{it.get('publishedAt','') }"
+            # enforce per-location cap
+            loc_key = searched_location or "_unknown_"
+            current = counts_by_location.get(loc_key, 0)
+            if current >= MAX_PER_LOCATION:
+                # we've reached the cap for this location; stop adding more
+                print(f"Reached cap of {MAX_PER_LOCATION} jobs for location '{searched_location}' — skipping remaining items from this run.")
+                break
             if url in seen_urls:
                 continue
             seen_urls.add(url)
             raw_jobs.append(it)
+            counts_by_location[loc_key] = current + 1
     except Exception as e:
         print(f"Warning: scraper actor call failed for input {run_input}: {e}")
 
 # Search by title and preferred locations in order
 for title in titles:
     for loc in locations:
+        remaining = MAX_PER_LOCATION - counts_by_location.get(loc, 0)
+        if remaining <= 0:
+            print(f"Skipping location {loc}: reached cap of {MAX_PER_LOCATION} jobs")
+            continue
         run_input = {
             "title": title,
             "location": loc,
-            "rows": rows_per_search,
+            "rows": min(rows_per_search, remaining),
             "publishedAt": "r86400",
         }
         fetch_and_accumulate(run_input, searched_title=title, searched_location=loc)
 
 # Also include remote jobs for the same set of titles
 for title in titles:
+    loc = "Remote"
+    remaining = MAX_PER_LOCATION - counts_by_location.get(loc, 0)
+    if remaining <= 0:
+        print(f"Skipping location {loc}: reached cap of {MAX_PER_LOCATION} jobs")
+        continue
     run_input = {
         "title": title,
-        "location": "Remote",
-        "rows": rows_per_search,
+        "location": loc,
+        "rows": min(rows_per_search, remaining),
         "publishedAt": "r86400",
     }
     fetch_and_accumulate(run_input, searched_title=title, searched_location="Remote")
 
 # If still empty, fall back to a broader India-wide search once
 if not raw_jobs:
-    run_input = {"title": "", "location": "India", "rows": 50, "publishedAt": "r86400"}
-    fetch_and_accumulate(run_input, searched_title="", searched_location="India")
+    loc = "India"
+    remaining = MAX_PER_LOCATION - counts_by_location.get(loc, 0)
+    if remaining > 0:
+        run_input = {"title": "", "location": loc, "rows": min(50, remaining), "publishedAt": "r86400"}
+        fetch_and_accumulate(run_input, searched_title="", searched_location="India")
+    else:
+        print(f"Skipping India fallback: reached cap of {MAX_PER_LOCATION} jobs")
 
 # If dry-run, replace raw_jobs with sample data and skip external calls
 if args.dry_run:
