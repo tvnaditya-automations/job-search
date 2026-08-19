@@ -1,0 +1,2 @@
+Paste your plain-text resume here (skills, experience, projects, certifications).
+This file is read by the matcher to score job descriptions against your profile.

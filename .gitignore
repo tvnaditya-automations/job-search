@@ -1,0 +1,5 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+Top_Matched_Jobs.xlsx
